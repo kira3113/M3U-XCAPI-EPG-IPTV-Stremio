@@ -41,6 +41,57 @@
 
 ---
 
+## 🎯 Real-Time Content Matching System (NEW v2.1.0)
+
+The **Real-Time Content Matching System** is a powerful feature that allows you to stream movies and TV series from **any external Stremio catalog** (like Cinemeta, TMDB, etc.) using your IPTV provider's content library.
+
+### How It Works
+
+1. **Browse External Catalogs**: Search for movies in Cinemeta, TMDB, or any other Stremio catalog
+2. **Click to Stream**: When you select a movie/series, Stremio sends an IMDB ID (e.g., `tt0770828`)
+3. **Real-Time Matching**: The addon instantly:
+   - Fetches the official title from OMDb API (e.g., "Man of Steel")
+   - Searches your IPTV provider's library using fuzzy matching
+   - Returns streaming URLs from your provider
+4. **Seamless Streaming**: Watch content from external catalogs using your IPTV subscription
+
+### Key Features
+
+- **🔍 OMDb API Integration**: Accurate title resolution from IMDB IDs
+- **🎯 Fuzzy Matching Algorithm**: Intelligent content matching across different title formats
+- **📺 Universal Catalog Support**: Works with any Stremio catalog that provides IMDB IDs
+- **⚡ Real-Time Processing**: No pre-indexing required - matches content on-demand
+- **🎬 Movies & Series Support**: Handles both movies (`tt1234567`) and series episodes (`tt1234567:1:1`)
+- **💾 Smart Caching**: 1-hour cache for matched results to improve performance
+
+### Setup Requirements
+
+To use Real-Time Content Matching, you need:
+
+1. **IPTV Provider Configured**: Either Direct M3U or Xtream Codes credentials
+2. **OMDb API Key**: Free API key from [OMDb API](http://www.omdbapi.com/) 
+3. **Environment Variable**: Set `OMDB_API_KEY=your_key_here`
+
+### Usage Example
+
+```bash
+# Set your OMDb API key
+export OMDB_API_KEY="your-omdb-api-key"
+
+# Start the addon
+npm start
+
+# In Stremio:
+# 1. Browse Cinemeta catalog
+# 2. Search for "Superman" 
+# 3. Click "Man of Steel (2013)"
+# 4. See streaming options from your IPTV provider!
+```
+
+The system automatically handles the complex matching process, giving you access to thousands of titles from external catalogs through your existing IPTV subscription.
+
+---
+
 ## 🧪 Quick Start (Local Dev)
 
 ```bash
@@ -60,6 +111,8 @@ CACHE_ENABLED=true
 CACHE_TTL_MS=21600000
 MAX_CACHE_ENTRIES=300
 DEBUG_MODE=true
+# Required for Real-Time Content Matching System:
+OMDB_API_KEY=your_omdb_api_key_here
 # Optional:
 # REDIS_URL=redis://localhost:6379
 # CONFIG_SECRET=super-long-random-string   (enables /encrypt)
@@ -77,6 +130,7 @@ docker run -d \
   -e PORT=7000 \
   -e DEBUG_MODE=false \
   -e CACHE_ENABLED=true \
+  -e OMDB_API_KEY=your_omdb_api_key_here \
   -p 7000:7000 \
   --name stremio-addon \
   stremio-iptv-addon
@@ -101,6 +155,7 @@ services:
       PREFETCH_ENABLED: "true"
       PREFETCH_MAX_BYTES: 6000000
       CONFIG_SECRET: "generate_a_long_random_string"
+      OMDB_API_KEY: "your_omdb_api_key_here"
       DEBUG_MODE: "false"
     depends_on:
       - redis
