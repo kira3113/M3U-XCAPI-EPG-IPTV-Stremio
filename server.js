@@ -323,7 +323,7 @@ app.use((error, req, res, next) => {
     if (!res.headersSent) res.status(500).json({ error: 'Internal server error' });
 });
 
-const port = process.env.PORT || 7000;
-app.listen(port, () => {
-    console.log(`🚀 Server running on port ${port} (debug=${DEBUG}, prefetch=${PREFETCH_ENABLED})`);
+const port = process.env.PORT || 5000;
+app.listen(port, '0.0.0.0', () => {
+    console.log(`🚀 Server running on 0.0.0.0:${port} (debug=${DEBUG}, prefetch=${PREFETCH_ENABLED})`);
 });
