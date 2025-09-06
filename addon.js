@@ -1036,7 +1036,66 @@ async function createAddon(config) {
 
         builder.defineStreamHandler(async ({ type, id }) => {
             try {
-                // Handle both new format (series_id:season:episode) and legacy format
+                // Real-Time Content Matching System: Handle IMDB ID-based requests
+                if (id.match(/^tt\d+/)) {
+                    const parseResult = addonInstance.parseImdbRequest(id);
+                    
+                    if (parseResult.isEpisode) {
+                        // Handle series episode: tt1234567:1:1
+                        const episodeData = await addonInstance.searchEpisodeByImdbId(
+                            parseResult.imdbId, 
+                            parseResult.season, 
+                            parseResult.episode
+                        );
+                        
+                        if (episodeData && episodeData.url) {
+                            const stream = {
+                                url: episodeData.url,
+                                title: `${episodeData.seriesName || 'Series'} S${parseResult.season}E${parseResult.episode}${episodeData.title ? ` - ${episodeData.title}` : ''}`,
+                                behaviorHints: { notWebReady: true }
+                            };
+                            
+                            if (addonInstance.config.debug) {
+                                console.log('[DEBUG] Real-time episode stream found', { 
+                                    id, 
+                                    title: stream.title,
+                                    url: stream.url.substring(0, 60) + '...'
+                                });
+                            }
+                            
+                            return { streams: [stream] };
+                        }
+                    } else {
+                        // Handle movie: tt1234567
+                        const movieData = await addonInstance.searchMovieByImdbId(parseResult.imdbId);
+                        
+                        if (movieData && movieData.url) {
+                            const stream = {
+                                url: movieData.url,
+                                title: movieData.name || movieData.title || 'Movie',
+                                behaviorHints: { notWebReady: true }
+                            };
+                            
+                            if (addonInstance.config.debug) {
+                                console.log('[DEBUG] Real-time movie stream found', { 
+                                    id, 
+                                    title: stream.title,
+                                    url: stream.url.substring(0, 60) + '...'
+                                });
+                            }
+                            
+                            return { streams: [stream] };
+                        }
+                    }
+                    
+                    // No real-time match found
+                    if (addonInstance.config.debug) {
+                        console.log('[DEBUG] No real-time match found for IMDB ID:', id);
+                    }
+                    return { streams: [] };
+                }
+
+                // Handle existing series formats (series_id:season:episode) and legacy format
                 if (id.includes(':') && id.match(/^iptv_series_\d+:\d+:\d+$/) || id.startsWith('iptv_series_ep_')) {
                     const stream = addonInstance.getStream(id);
                     if (!stream) return { streams: [] };
@@ -1049,6 +1108,8 @@ async function createAddon(config) {
                     }
                     return { streams: [stream] };
                 }
+                
+                // Handle regular content (channels, movies from catalogs)
                 const stream = addonInstance.getStream(id);
                 if (!stream) return { streams: [] };
                 if (addonInstance.config.debug) {
