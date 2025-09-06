@@ -7,6 +7,107 @@ const crypto = require("crypto");
 const LRUCache = require("./lruCache");
 const fetch = require('node-fetch');
 
+// Real-Time Content Matching System Components
+class ContentMatcher {
+    constructor(omdbApiKey, logger) {
+        this.omdbApiKey = omdbApiKey;
+        this.log = logger;
+        this.omdbCache = new Map(); // Cache OMDb results
+        this.matchingThreshold = 0.8; // Similarity threshold for fuzzy matching
+    }
+
+    // Normalize title for better matching
+    normalizeTitle(title) {
+        if (!title) return '';
+        return title
+            .toLowerCase()
+            .replace(/[^\w\s]/g, ' ')                    // Remove special chars
+            .replace(/\s+/g, ' ')                        // Collapse whitespace
+            .replace(/\b(19|20)\d{2}\b/g, '')            // Remove years
+            .replace(/\b(hdtv|1080p|720p|hd|4k|uhd|bluray|webrip|dvdrip)\b/gi, '') // Remove quality tags
+            .replace(/\b(dubbed|hindi|english|arabic|french|spanish)\b/gi, '')      // Remove language tags
+            .replace(/\b(complete|season|series|episode|ep)\b/gi, '')               // Remove series keywords
+            .trim();
+    }
+
+    // Fuzzy matching algorithm
+    fuzzyMatch(title1, title2, threshold = null) {
+        const useThreshold = threshold !== null ? threshold : this.matchingThreshold;
+        const norm1 = this.normalizeTitle(title1);
+        const norm2 = this.normalizeTitle(title2);
+        
+        if (norm1 === norm2) return 1.0; // Perfect match
+        
+        const words1 = norm1.split(/\s+/).filter(w => w.length > 2);
+        const words2 = norm2.split(/\s+/).filter(w => w.length > 2);
+        
+        if (words1.length === 0 || words2.length === 0) return 0;
+        
+        const matches = words1.filter(word => words2.includes(word)).length;
+        const similarity = matches / Math.max(words1.length, words2.length);
+        
+        return similarity;
+    }
+
+    // Get official title from OMDb API
+    async getOfficialTitle(imdbId) {
+        if (this.omdbCache.has(imdbId)) {
+            return this.omdbCache.get(imdbId);
+        }
+
+        if (!this.omdbApiKey) {
+            this.log.warn('OMDb API key not configured');
+            return null;
+        }
+
+        try {
+            const response = await fetch(`http://www.omdbapi.com/?apikey=${this.omdbApiKey}&i=${imdbId}&plot=short`);
+            const data = await response.json();
+            
+            if (data.Response === 'True') {
+                const result = {
+                    title: data.Title,
+                    year: data.Year,
+                    type: data.Type,
+                    plot: data.Plot
+                };
+                this.omdbCache.set(imdbId, result);
+                this.log.debug(`🎬 OMDb found: ${data.Title} (${data.Year})`);
+                return result;
+            } else {
+                this.log.warn(`❌ OMDb API error for ${imdbId}: ${data.Error}`);
+                this.omdbCache.set(imdbId, null);
+                return null;
+            }
+        } catch (error) {
+            this.log.error(`❌ OMDb API request failed for ${imdbId}:`, error.message);
+            return null;
+        }
+    }
+
+    // Find best match in content library
+    findBestMatch(targetTitle, contentLibrary, contentType = 'movie') {
+        let bestMatch = null;
+        let bestScore = 0;
+        
+        for (const item of contentLibrary) {
+            const itemTitle = item.name || item.title || '';
+            const score = this.fuzzyMatch(targetTitle, itemTitle);
+            
+            if (score > bestScore && score >= this.matchingThreshold) {
+                bestScore = score;
+                bestMatch = item;
+            }
+        }
+        
+        if (bestMatch) {
+            this.log.debug(`🎯 Best match found: "${bestMatch.name || bestMatch.title}" (score: ${bestScore.toFixed(2)})`);
+        }
+        
+        return { match: bestMatch, score: bestScore };
+    }
+}
+
 let redisClient = null;
 if (process.env.REDIS_URL) {
     try {
@@ -100,6 +201,10 @@ class M3UEPGAddon {
 
         // Direct provider may populate this (seriesId -> episodes array)
         this.directSeriesEpisodeIndex = new Map();
+
+        // Real-Time Content Matching System
+        this.contentMatcher = new ContentMatcher(process.env.OMDB_API_KEY, this.log);
+        this.realTimeCache = new Map(); // Cache for IMDB-based requests
 
         if (typeof this.config.epgOffsetHours === 'string') {
             const n = parseFloat(this.config.epgOffsetHours);
