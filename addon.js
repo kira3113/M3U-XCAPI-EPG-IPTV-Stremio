@@ -963,7 +963,7 @@ async function createAddon(config) {
                 genres: []
             }
         ],
-        idPrefixes: ["iptv_"],
+        idPrefixes: ["iptv_", "tt"],
         behaviorHints: {
             configurable: true,
             configurationRequired: false
