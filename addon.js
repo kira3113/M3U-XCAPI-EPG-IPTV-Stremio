@@ -1072,7 +1072,19 @@ async function createAddon(config) {
                         }
                     } else {
                         // Handle movie: tt1234567
+                        if (addonInstance.config.debug) {
+                            console.log('[DEBUG] Processing movie IMDB request:', parseResult.imdbId);
+                        }
+                        
                         const movieData = await addonInstance.searchMovieByImdbId(parseResult.imdbId);
+                        
+                        if (addonInstance.config.debug) {
+                            console.log('[DEBUG] Movie search result:', movieData ? {
+                                name: movieData.name,
+                                hasUrl: !!movieData.url,
+                                urlPreview: movieData.url ? movieData.url.substring(0, 60) + '...' : 'No URL'
+                            } : 'No movie data returned');
+                        }
                         
                         if (movieData && movieData.url) {
                             const stream = {
@@ -1090,6 +1102,10 @@ async function createAddon(config) {
                             }
                             
                             return { streams: [stream] };
+                        } else {
+                            if (addonInstance.config.debug) {
+                                console.log('[DEBUG] No movie match found for IMDB ID:', parseResult.imdbId);
+                            }
                         }
                     }
                     
