@@ -497,16 +497,16 @@ class M3UEPGAddon {
     async buildSeriesMeta(seriesItem) {
         const seriesIdRaw = seriesItem.series_id || seriesItem.id.replace(/^iptv_series_/, '');
         const info = await this.ensureSeriesInfo(seriesIdRaw);
-        const videos = (info?.videos || []).map(v => ({
+        const videos = (info?.videos || []).filter(v => v && v.id && v.title).map(v => ({
             id: v.id,
-            title: v.title,
-            season: v.season,
-            episode: v.episode,
+            title: v.title || `Episode ${v.episode || 0}`,
+            season: Number(v.season) || 1,
+            episode: Number(v.episode) || 0,
             released: v.released || null,
             thumbnail: v.thumbnail || seriesItem.poster || seriesItem.attributes?.['tvg-logo']
         }));
 
-        return {
+        const meta = {
             id: seriesItem.id,
             type: 'series',
             name: seriesItem.name,
@@ -519,6 +519,22 @@ class M3UEPGAddon {
                 : (seriesItem.attributes?.['group-title'] ? [seriesItem.attributes['group-title']] : ['Series']),
             videos
         };
+
+        if (this.config.debug) {
+            this.log.debug('Built series meta', {
+                seriesId: seriesItem.id,
+                name: seriesItem.name,
+                videoCount: videos.length,
+                firstVideo: videos[0] ? {
+                    id: videos[0].id,
+                    title: videos[0].title,
+                    season: videos[0].season,
+                    episode: videos[0].episode
+                } : null
+            });
+        }
+
+        return meta;
     }
 
     async getDetailedMetaAsync(id, type) {
@@ -713,17 +729,27 @@ async function createAddon(config) {
                 if (type === 'series' || id.startsWith('iptv_series_')) {
                     const meta = await addonInstance.getDetailedMetaAsync(id, 'series');
                     if (addonInstance.config.debug) {
-                        console.log('[DEBUG] Series meta request', { id, videos: meta?.videos?.length });
+                        console.log('[DEBUG] Series meta request', { 
+                            id, 
+                            type,
+                            metaFound: !!meta,
+                            videos: meta?.videos?.length,
+                            metaKeys: meta ? Object.keys(meta) : null
+                        });
+                    }
+                    if (!meta) {
+                        console.warn('[META] No series meta found for id:', id);
+                        return { meta: null };
                     }
                     return { meta };
                 }
                 const meta = addonInstance.getDetailedMeta(id);
                 if (addonInstance.config.debug) {
-                    console.log('[DEBUG] Meta request', { id, type });
+                    console.log('[DEBUG] Meta request', { id, type, metaFound: !!meta });
                 }
                 return { meta };
             } catch (e) {
-                console.error('[META] Error', e);
+                console.error('[META] Error for id:', id, 'type:', type, e);
                 return { meta: null };
             }
         });
