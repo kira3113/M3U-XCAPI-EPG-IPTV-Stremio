@@ -1036,6 +1036,11 @@ async function createAddon(config) {
 
         builder.defineStreamHandler(async ({ type, id }) => {
             try {
+                // DEBUG: Log all incoming stream requests
+                if (addonInstance.config.debug) {
+                    console.log('[DEBUG] Stream request received:', { type, id, isImdbId: id.match(/^tt\d+/) ? true : false });
+                }
+                
                 // Real-Time Content Matching System: Handle IMDB ID-based requests
                 if (id.match(/^tt\d+/)) {
                     const parseResult = addonInstance.parseImdbRequest(id);
