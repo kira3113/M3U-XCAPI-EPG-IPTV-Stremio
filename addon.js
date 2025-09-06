@@ -497,13 +497,15 @@ class M3UEPGAddon {
     async buildSeriesMeta(seriesItem) {
         const seriesIdRaw = seriesItem.series_id || seriesItem.id.replace(/^iptv_series_/, '');
         const info = await this.ensureSeriesInfo(seriesIdRaw);
-        const videos = (info?.videos || []).filter(v => v && v.id && v.title).map(v => ({
+        const videos = (info?.videos || []).filter(v => v && v.id && v.title && v.url).map(v => ({
             id: v.id,
             title: v.title || `Episode ${v.episode || 0}`,
             season: Number(v.season) || 1,
             episode: Number(v.episode) || 0,
             released: v.released || null,
-            thumbnail: v.thumbnail || seriesItem.poster || seriesItem.attributes?.['tvg-logo']
+            thumbnail: v.thumbnail || seriesItem.poster || seriesItem.attributes?.['tvg-logo'],
+            url: v.url,
+            stream_id: v.stream_id || v.id
         }));
 
         const meta = {
