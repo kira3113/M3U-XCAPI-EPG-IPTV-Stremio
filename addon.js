@@ -773,6 +773,163 @@ class M3UEPGAddon {
             };
         }
     }
+
+    // Real-Time Content Matching System Methods
+    
+    // Parse IMDB ID and extract episode info if applicable
+    parseImdbRequest(id) {
+        if (id.includes(':')) {
+            // Format: tt1234567:1:1 (imdbId:season:episode)
+            const parts = id.split(':');
+            if (parts.length === 3) {
+                return {
+                    imdbId: parts[0],
+                    season: parseInt(parts[1]),
+                    episode: parseInt(parts[2]),
+                    isEpisode: true
+                };
+            }
+        }
+        return {
+            imdbId: id,
+            isEpisode: false
+        };
+    }
+
+    // Real-time movie search using IMDB ID
+    async searchMovieByImdbId(imdbId) {
+        this.log.debug(`🔍 Searching IPTV library for IMDB ID: ${imdbId}`);
+        
+        // Check cache first
+        if (this.realTimeCache.has(imdbId)) {
+            const cached = this.realTimeCache.get(imdbId);
+            if (Date.now() - cached.timestamp < 3600000) { // 1 hour cache
+                this.log.debug(`📦 Using cached result for ${imdbId}`);
+                return cached.result;
+            }
+        }
+
+        try {
+            // Get official title from OMDb
+            const omdbData = await this.contentMatcher.getOfficialTitle(imdbId);
+            if (!omdbData) {
+                this.log.warn(`❌ Could not get movie title from OMDb for ${imdbId}`);
+                return null;
+            }
+
+            // Ensure fresh IPTV data
+            if (this.movies.length === 0) {
+                this.log.debug(`🎬 No stored content found, searching IPTV provider for movie...`);
+                await this.updateData(false);
+            }
+
+            this.log.debug(`📊 Total movies in IPTV library: ${this.movies.length}`);
+            this.log.debug(`🎯 Searching IPTV library for: "${omdbData.title}"`);
+
+            // Find best match
+            const { match, score } = this.contentMatcher.findBestMatch(omdbData.title, this.movies, 'movie');
+            
+            if (match) {
+                this.log.debug(`✅ Added stream for: ${match.name}`);
+                
+                // Cache the result
+                this.realTimeCache.set(imdbId, {
+                    result: match,
+                    timestamp: Date.now()
+                });
+                
+                return match;
+            } else {
+                this.log.warn(`❌ No suitable match found for "${omdbData.title}" in IPTV library`);
+                return null;
+            }
+        } catch (error) {
+            this.log.error(`❌ Error searching for movie ${imdbId}:`, error.message);
+            return null;
+        }
+    }
+
+    // Real-time series episode search using IMDB ID
+    async searchEpisodeByImdbId(imdbId, season, episode) {
+        this.log.debug(`🔍 Searching IPTV library for IMDB ID: ${imdbId}:${season}:${episode}`);
+        
+        // Check cache first
+        const cacheKey = `${imdbId}:${season}:${episode}`;
+        if (this.realTimeCache.has(cacheKey)) {
+            const cached = this.realTimeCache.get(cacheKey);
+            if (Date.now() - cached.timestamp < 3600000) { // 1 hour cache
+                this.log.debug(`📦 Using cached result for ${cacheKey}`);
+                return cached.result;
+            }
+        }
+
+        try {
+            // Get official title from OMDb
+            const omdbData = await this.contentMatcher.getOfficialTitle(imdbId);
+            if (!omdbData) {
+                this.log.warn(`❌ Could not get series title from OMDb for ${imdbId}`);
+                return null;
+            }
+
+            // Ensure fresh IPTV data
+            if (this.series.length === 0) {
+                this.log.debug(`📺 No stored content found, searching IPTV provider for series...`);
+                await this.updateData(false);
+            }
+
+            this.log.debug(`🎯 Looking for series ${imdbId}, Season ${season}, Episode ${episode}`);
+            this.log.debug(`📊 Total series in IPTV library: ${this.series.length}`);
+            this.log.debug(`🎯 Searching IPTV library for series: "${omdbData.title}"`);
+
+            // Find best series match
+            const { match: seriesMatch } = this.contentMatcher.findBestMatch(omdbData.title, this.series, 'series');
+            
+            if (seriesMatch) {
+                // Get series episodes
+                const seriesInfo = await this.ensureSeriesInfo(seriesMatch.series_id || seriesMatch.id.replace(/^iptv_series_/, ''));
+                
+                if (seriesInfo && Array.isArray(seriesInfo.videos)) {
+                    this.log.debug(`📺 Series has episodes data, looking for S${season}E${episode}`);
+                    
+                    // Find specific episode
+                    const episodeMatch = seriesInfo.videos.find(v => 
+                        Number(v.season) === season && Number(v.episode) === episode
+                    );
+                    
+                    if (episodeMatch) {
+                        this.log.debug(`✅ Added stream for: ${seriesMatch.name} S${season}E${episode}`);
+                        
+                        // Cache the result
+                        this.realTimeCache.set(cacheKey, {
+                            result: {
+                                ...episodeMatch,
+                                seriesName: seriesMatch.name,
+                                seriesId: seriesMatch.id
+                            },
+                            timestamp: Date.now()
+                        });
+                        
+                        return {
+                            ...episodeMatch,
+                            seriesName: seriesMatch.name,
+                            seriesId: seriesMatch.id
+                        };
+                    } else {
+                        this.log.warn(`❌ Episode S${season}E${episode} not found in series "${seriesMatch.name}"`);
+                    }
+                } else {
+                    this.log.warn(`❌ No episodes data available for series "${seriesMatch.name}"`);
+                }
+            } else {
+                this.log.warn(`❌ No suitable series match found for "${omdbData.title}" in IPTV library`);
+            }
+            
+            return null;
+        } catch (error) {
+            this.log.error(`❌ Error searching for episode ${imdbId}:${season}:${episode}:`, error.message);
+            return null;
+        }
+    }
 }
 
 async function createAddon(config) {
