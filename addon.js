@@ -458,7 +458,42 @@ class M3UEPGAddon {
     }
 
     getStream(id) {
-        // Episode streams
+        // Handle new Stremio-format series episode IDs: {seriesId}:{season}:{episode}
+        if (id.includes(':') && id.match(/^iptv_series_\d+:\d+:\d+$/)) {
+            const [seriesId, seasonStr, episodeStr] = id.split(':');
+            const season = Number(seasonStr);
+            const episode = Number(episodeStr);
+            
+            // Find the episode in cached series info
+            for (const [, info] of this.seriesInfoCache.entries()) {
+                if (info && Array.isArray(info.videos)) {
+                    const epEntry = info.videos.find(v => 
+                        Number(v.season) === season && 
+                        Number(v.episode) === episode
+                    );
+                    if (epEntry && epEntry.url) {
+                        return {
+                            url: epEntry.url,
+                            title: `${epEntry.title || `Episode ${episode}`} S${season}E${episode}`,
+                            behaviorHints: { notWebReady: true }
+                        };
+                    }
+                }
+            }
+            
+            // Fallback: lookup by original ID format
+            const epEntry = this.lookupEpisodeById(`iptv_series_ep_${seasonStr}_${episodeStr}`);
+            if (epEntry) {
+                return {
+                    url: epEntry.url,
+                    title: `${epEntry.title || 'Episode'} S${season}E${episode}`,
+                    behaviorHints: { notWebReady: true }
+                };
+            }
+            return null;
+        }
+        
+        // Legacy episode streams
         if (id.startsWith('iptv_series_ep_')) {
             const epEntry = this.lookupEpisodeById(id);
             if (!epEntry) return null;
@@ -468,6 +503,8 @@ class M3UEPGAddon {
                 behaviorHints: { notWebReady: true }
             };
         }
+        
+        // Regular channels and movies
         const all = [...this.channels, ...this.movies];
         const item = all.find(i => i.id === id);
         if (!item) return null;
@@ -497,16 +534,37 @@ class M3UEPGAddon {
     async buildSeriesMeta(seriesItem) {
         const seriesIdRaw = seriesItem.series_id || seriesItem.id.replace(/^iptv_series_/, '');
         const info = await this.ensureSeriesInfo(seriesIdRaw);
-        const videos = (info?.videos || []).filter(v => v && v.id && v.title && v.url).map(v => ({
-            id: v.id,
-            title: v.title || `Episode ${v.episode || 0}`,
-            season: Number(v.season) || 1,
-            episode: Number(v.episode) || 0,
-            released: v.released || null,
-            thumbnail: v.thumbnail || seriesItem.poster || seriesItem.attributes?.['tvg-logo'],
-            url: v.url,
-            stream_id: v.stream_id || v.id
-        }));
+        const videos = (info?.videos || []).filter(v => v && v.id && v.title && v.url).map(v => {
+            const season = Number(v.season) || 1;
+            const episode = Number(v.episode) || 0;
+            // Stremio expects video ID format: {seriesId}:{season}:{episode}
+            const videoId = `${seriesItem.id}:${season}:${episode}`;
+            
+            // Format released date to ISO 8601 if available
+            let releasedDate = null;
+            if (v.released) {
+                try {
+                    releasedDate = new Date(v.released).toISOString();
+                } catch (e) {
+                    releasedDate = new Date().toISOString(); // fallback to current date
+                }
+            } else {
+                releasedDate = new Date().toISOString(); // default to current date
+            }
+            
+            return {
+                id: videoId,
+                title: v.title || `Episode ${episode}`,
+                season: season,
+                episode: episode,
+                released: releasedDate,
+                thumbnail: v.thumbnail || seriesItem.poster || seriesItem.attributes?.['tvg-logo'],
+                // Store original data for stream resolution
+                _originalId: v.id,
+                _url: v.url,
+                _streamId: v.stream_id || v.id
+            };
+        });
 
         const meta = {
             id: seriesItem.id,
@@ -531,8 +589,18 @@ class M3UEPGAddon {
                     id: videos[0].id,
                     title: videos[0].title,
                     season: videos[0].season,
-                    episode: videos[0].episode
-                } : null
+                    episode: videos[0].episode,
+                    hasUrl: !!videos[0].url,
+                    hasStreamId: !!videos[0].stream_id
+                } : null,
+                sampleVideos: videos.slice(0, 3).map(v => ({
+                    id: v.id,
+                    title: v.title,
+                    season: v.season,
+                    episode: v.episode,
+                    hasUrl: !!v.url,
+                    urlPreview: v.url ? v.url.substring(0, 50) + '...' : null
+                }))
             });
         }
 
@@ -706,22 +774,31 @@ async function createAddon(config) {
 
         builder.defineStreamHandler(async ({ type, id }) => {
             try {
-                if (id.startsWith('iptv_series_ep_')) {
+                // Handle both new format (series_id:season:episode) and legacy format
+                if (id.includes(':') && id.match(/^iptv_series_\d+:\d+:\d+$/) || id.startsWith('iptv_series_ep_')) {
                     const stream = addonInstance.getStream(id);
                     if (!stream) return { streams: [] };
                     if (addonInstance.config.debug) {
-                        console.log('[DEBUG] Series Episode Stream request', { id, url: stream.url });
+                        console.log('[DEBUG] Series Episode Stream request', { 
+                            id, 
+                            url: stream.url ? stream.url.substring(0, 60) + '...' : 'no url',
+                            title: stream.title 
+                        });
                     }
                     return { streams: [stream] };
                 }
                 const stream = addonInstance.getStream(id);
                 if (!stream) return { streams: [] };
                 if (addonInstance.config.debug) {
-                    console.log('[DEBUG] Stream request', { id, url: stream.url });
+                    console.log('[DEBUG] Stream request', { 
+                        id, 
+                        type,
+                        url: stream.url ? stream.url.substring(0, 60) + '...' : 'no url' 
+                    });
                 }
                 return { streams: [stream] };
             } catch (e) {
-                console.error('[STREAM] Error', e);
+                console.error('[STREAM] Error for id:', id, e);
                 return { streams: [] };
             }
         });
