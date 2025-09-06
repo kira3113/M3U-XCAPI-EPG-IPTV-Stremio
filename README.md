@@ -1,6 +1,9 @@
 # ☄️ Stremio IPTV Addon (Direct M3U • Xtream Codes • XMLTV EPG • Series Support)
 
 > A self‑hostable, token‑based, privacy‑friendly IPTV addon for **Stremio** supporting:
+> - **🎯 Real-Time Content Matching System** (NEW v2.1.0) - Stream movies/series from external catalogs (Cinemeta, TMDB, etc.) using your IPTV provider
+> - **🔍 OMDb API Integration** - Intelligent title matching and fuzzy search for accurate content discovery
+> - **📺 External Catalog Support** - Works seamlessly with any Stremio catalog via IMDB ID matching
 > - Direct M3U playlists (TV + Movie + heuristic Series detection)
 > - Xtream Codes API (JSON mode + m3u_plus mode)
 > - Panel XMLTV or custom EPG feeds
