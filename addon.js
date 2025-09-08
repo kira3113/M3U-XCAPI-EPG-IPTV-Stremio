@@ -85,26 +85,171 @@ class ContentMatcher {
         }
     }
 
-    // Find best match in content library
-    findBestMatch(targetTitle, contentLibrary, contentType = 'movie') {
-        let bestMatch = null;
-        let bestScore = 0;
+    // Extract quality information from title
+    extractQuality(title) {
+        if (!title) return { quality: 0, qualityTag: 'SD' };
         
+        const titleLower = title.toLowerCase();
+        
+        // Quality hierarchy (higher number = better quality)
+        if (titleLower.includes('4k') || titleLower.includes('2160p') || titleLower.includes('uhd')) {
+            return { quality: 8, qualityTag: '4K' };
+        }
+        if (titleLower.includes('1080p') || titleLower.includes('fhd')) {
+            return { quality: 6, qualityTag: '1080p' };
+        }
+        if (titleLower.includes('720p') || titleLower.includes('hd')) {
+            return { quality: 4, qualityTag: '720p' };
+        }
+        if (titleLower.includes('480p') || titleLower.includes('sd')) {
+            return { quality: 2, qualityTag: '480p' };
+        }
+        
+        // Default quality scoring
+        return { quality: 3, qualityTag: 'HD' };
+    }
+
+    // Extract source quality from title
+    extractSource(title) {
+        if (!title) return { source: 0, sourceTag: 'Unknown' };
+        
+        const titleLower = title.toLowerCase();
+        
+        // Source hierarchy (higher number = better source)
+        if (titleLower.includes('bluray') || titleLower.includes('blu-ray')) {
+            return { source: 10, sourceTag: 'BluRay' };
+        }
+        if (titleLower.includes('remux')) {
+            return { source: 9, sourceTag: 'Remux' };
+        }
+        if (titleLower.includes('web-dl') || titleLower.includes('webdl')) {
+            return { source: 8, sourceTag: 'WEB-DL' };
+        }
+        if (titleLower.includes('webrip')) {
+            return { source: 6, sourceTag: 'WEBRip' };
+        }
+        if (titleLower.includes('hdtv')) {
+            return { source: 4, sourceTag: 'HDTV' };
+        }
+        if (titleLower.includes('dvdrip')) {
+            return { source: 3, sourceTag: 'DVDRip' };
+        }
+        
+        return { source: 5, sourceTag: 'Digital' };
+    }
+
+    // Extract year from title
+    extractYear(title) {
+        if (!title) return null;
+        const yearMatch = title.match(/\b(19|20)\d{2}\b/);
+        return yearMatch ? parseInt(yearMatch[0]) : null;
+    }
+
+    // Find multiple matches in content library with quality ranking
+    findAllMatches(targetTitle, targetYear, contentLibrary, contentType = 'movie') {
+        const matches = [];
+        
+        // First pass: collect all matches above threshold
         for (const item of contentLibrary) {
             const itemTitle = item.name || item.title || '';
             const score = this.fuzzyMatch(targetTitle, itemTitle);
             
-            if (score > bestScore && score >= this.matchingThreshold) {
-                bestScore = score;
-                bestMatch = item;
+            if (score >= this.matchingThreshold) {
+                const qualityInfo = this.extractQuality(itemTitle);
+                const sourceInfo = this.extractSource(itemTitle);
+                const itemYear = this.extractYear(itemTitle);
+                
+                // Year matching bonus
+                let yearBonus = 0;
+                if (targetYear && itemYear) {
+                    if (itemYear === targetYear) {
+                        yearBonus = 0.1; // Exact year match gets bonus
+                    } else {
+                        // Penalize based on year difference
+                        const yearDiff = Math.abs(itemYear - targetYear);
+                        yearBonus = Math.max(-0.05, -yearDiff * 0.01);
+                    }
+                }
+                
+                const enhancedScore = score + yearBonus;
+                
+                matches.push({
+                    item,
+                    titleScore: score,
+                    yearBonus,
+                    finalScore: enhancedScore,
+                    qualityScore: qualityInfo.quality,
+                    qualityTag: qualityInfo.qualityTag,
+                    sourceScore: sourceInfo.source,
+                    sourceTag: sourceInfo.sourceTag,
+                    year: itemYear,
+                    title: itemTitle
+                });
             }
         }
         
-        if (bestMatch) {
-            this.log.debug(`🎯 Best match found: "${bestMatch.name || bestMatch.title}" (score: ${bestScore.toFixed(2)})`);
+        // Sort by multiple criteria: final score, quality, source
+        matches.sort((a, b) => {
+            // Primary: Final similarity score (including year bonus)
+            if (Math.abs(a.finalScore - b.finalScore) > 0.05) {
+                return b.finalScore - a.finalScore;
+            }
+            // Secondary: Quality (4K > 1080p > 720p)
+            if (a.qualityScore !== b.qualityScore) {
+                return b.qualityScore - a.qualityScore;
+            }
+            // Tertiary: Source quality (BluRay > WEB-DL > WEBRip)
+            return b.sourceScore - a.sourceScore;
+        });
+        
+        // Log all matches found with emojis
+        if (matches.length > 0) {
+            this.log.debug(`🎯 Found ${matches.length} matches for "${targetTitle}"${targetYear ? ` (${targetYear})` : ''}:`);
+            matches.slice(0, 5).forEach((match, index) => {
+                // Quality emojis for logging
+                let qualityEmoji = '';
+                switch(match.qualityTag) {
+                    case '4K': qualityEmoji = '🔥'; break;
+                    case '1080p': qualityEmoji = '⭐'; break;
+                    case '720p': qualityEmoji = '✨'; break;
+                    case '480p': qualityEmoji = '📺'; break;
+                    default: qualityEmoji = '💿'; break;
+                }
+                
+                // Source emojis for logging
+                let sourceEmoji = '';
+                switch(match.sourceTag) {
+                    case 'BluRay': sourceEmoji = '💎'; break;
+                    case 'Remux': sourceEmoji = '👑'; break;
+                    case 'WEB-DL': sourceEmoji = '🌐'; break;
+                    case 'WEBRip': sourceEmoji = '📡'; break;
+                    case 'HDTV': sourceEmoji = '📺'; break;
+                    case 'DVDRip': sourceEmoji = '💿'; break;
+                    default: sourceEmoji = '🎬'; break;
+                }
+                
+                const crownStar = index === 0 ? ' 👑' : '';
+                this.log.debug(`   ${index + 1}. "${match.title}" ${qualityEmoji}${sourceEmoji} (score: ${match.finalScore.toFixed(2)})${crownStar}`);
+            });
+            if (matches.length > 5) {
+                this.log.debug(`   ... and ${matches.length - 5} more matches`);
+            }
         }
         
-        return { match: bestMatch, score: bestScore };
+        return matches;
+    }
+
+    // Find best match in content library (legacy method for backward compatibility)
+    findBestMatch(targetTitle, contentLibrary, contentType = 'movie') {
+        const matches = this.findAllMatches(targetTitle, null, contentLibrary, contentType);
+        const bestMatch = matches.length > 0 ? matches[0] : null;
+        
+        if (bestMatch) {
+            this.log.debug(`🎯 Best match found: "${bestMatch.title}" (score: ${bestMatch.finalScore.toFixed(2)})`);
+            return { match: bestMatch.item, score: bestMatch.finalScore };
+        }
+        
+        return { match: null, score: 0 };
     }
 }
 
@@ -577,9 +722,14 @@ class M3UEPGAddon {
                         Number(v.episode) === episode
                     );
                     if (epEntry && epEntry.url) {
+                        // Beautiful episode formatting with emojis
+                        const episodeTitle = epEntry.title || `Episode ${episode}`;
+                        const seasonEmoji = season === 1 ? '🌟' : '📺';
+                        const episodeEmoji = '🎬';
+                        
                         return {
                             url: epEntry.url,
-                            title: `${epEntry.title || `Episode ${episode}`} S${season}E${episode}`,
+                            title: `${seasonEmoji} ${episodeTitle} S${season}E${episode} ${episodeEmoji}`,
                             behaviorHints: { notWebReady: true }
                         };
                     }
@@ -589,9 +739,14 @@ class M3UEPGAddon {
             // Fallback: lookup by original ID format
             const epEntry = this.lookupEpisodeById(`iptv_series_ep_${seasonStr}_${episodeStr}`);
             if (epEntry) {
+                // Beautiful fallback episode formatting with emojis
+                const episodeTitle = epEntry.title || 'Episode';
+                const seasonEmoji = season === 1 ? '🌟' : '📺';
+                const episodeEmoji = '🎬';
+                
                 return {
                     url: epEntry.url,
-                    title: `${epEntry.title || 'Episode'} S${season}E${episode}`,
+                    title: `${seasonEmoji} ${episodeTitle} S${season}E${episode} ${episodeEmoji}`,
                     behaviorHints: { notWebReady: true }
                 };
             }
@@ -602,9 +757,20 @@ class M3UEPGAddon {
         if (id.startsWith('iptv_series_ep_')) {
             const epEntry = this.lookupEpisodeById(id);
             if (!epEntry) return null;
+            
+            // Beautiful episode formatting with emojis
+            const episodeTitle = epEntry.title || 'Episode';
+            const seasonEmoji = epEntry.season === 1 ? '🌟' : '📺';
+            const episodeEmoji = '🎬';
+            
+            let formattedTitle = `${seasonEmoji} ${episodeTitle} ${episodeEmoji}`;
+            if (epEntry.season) {
+                formattedTitle = `${seasonEmoji} ${episodeTitle} S${epEntry.season}E${epEntry.episode} ${episodeEmoji}`;
+            }
+            
             return {
                 url: epEntry.url,
-                title: `${epEntry.title || 'Episode'}${epEntry.season ? ` S${epEntry.season}E${epEntry.episode}` : ''}`,
+                title: formattedTitle,
                 behaviorHints: { notWebReady: true }
             };
         }
@@ -615,7 +781,7 @@ class M3UEPGAddon {
         if (!item) return null;
         return {
             url: item.url,
-            title: item.type === 'tv' ? `${item.name} - Live` : item.name,
+            title: item.type === 'tv' ? `📡 ${item.name} - Live` : item.name,
             behaviorHints: { notWebReady: true }
         };
     }
@@ -796,7 +962,7 @@ class M3UEPGAddon {
         };
     }
 
-    // Real-time movie search using IMDB ID
+    // Real-time movie search using IMDB ID - now returns multiple matches
     async searchMovieByImdbId(imdbId) {
         this.log.debug(`🔍 Searching IPTV library for IMDB ID: ${imdbId}`);
         
@@ -814,7 +980,7 @@ class M3UEPGAddon {
             const omdbData = await this.contentMatcher.getOfficialTitle(imdbId);
             if (!omdbData) {
                 this.log.warn(`❌ Could not get movie title from OMDb for ${imdbId}`);
-                return null;
+                return [];
             }
 
             // Ensure fresh IPTV data
@@ -826,26 +992,29 @@ class M3UEPGAddon {
             this.log.debug(`📊 Total movies in IPTV library: ${this.movies.length}`);
             this.log.debug(`🎯 Searching IPTV library for: "${omdbData.title}"`);
 
-            // Find best match
-            const { match, score } = this.contentMatcher.findBestMatch(omdbData.title, this.movies, 'movie');
+            // Find all matches using enhanced system
+            const targetYear = omdbData.year ? parseInt(omdbData.year) : null;
+            const matches = this.contentMatcher.findAllMatches(omdbData.title, targetYear, this.movies, 'movie');
             
-            if (match) {
-                this.log.debug(`✅ Added stream for: ${match.name}`);
+            if (matches.length > 0) {
+                // Limit to top 5 matches to avoid overwhelming the user
+                const topMatches = matches.slice(0, 5);
+                this.log.debug(`✅ Found ${matches.length} matches, returning top ${topMatches.length}`);
                 
                 // Cache the result
                 this.realTimeCache.set(imdbId, {
-                    result: match,
+                    result: topMatches,
                     timestamp: Date.now()
                 });
                 
-                return match;
+                return topMatches;
             } else {
-                this.log.warn(`❌ No suitable match found for "${omdbData.title}" in IPTV library`);
-                return null;
+                this.log.warn(`❌ No suitable matches found for "${omdbData.title}" in IPTV library`);
+                return [];
             }
         } catch (error) {
             this.log.error(`❌ Error searching for movie ${imdbId}:`, error.message);
-            return null;
+            return [];
         }
     }
 
@@ -891,29 +1060,52 @@ class M3UEPGAddon {
                 if (seriesInfo && Array.isArray(seriesInfo.videos)) {
                     this.log.debug(`📺 Series has episodes data, looking for S${season}E${episode}`);
                     
-                    // Find specific episode
-                    const episodeMatch = seriesInfo.videos.find(v => 
+                    // Find ALL episodes matching this season/episode (for multiple qualities)
+                    const episodeMatches = seriesInfo.videos.filter(v => 
                         Number(v.season) === season && Number(v.episode) === episode
                     );
                     
-                    if (episodeMatch) {
-                        this.log.debug(`✅ Added stream for: ${seriesMatch.name} S${season}E${episode}`);
+                    if (episodeMatches.length > 0) {
+                        // Analyze and rank episodes by quality
+                        const enhancedEpisodes = episodeMatches.map(ep => {
+                            const qualityInfo = this.contentMatcher.extractQuality(ep.title || '');
+                            const sourceInfo = this.contentMatcher.extractSource(ep.title || '');
+                            
+                            return {
+                                episode: ep,
+                                qualityScore: qualityInfo.quality,
+                                qualityTag: qualityInfo.qualityTag,
+                                sourceScore: sourceInfo.source,
+                                sourceTag: sourceInfo.sourceTag,
+                                seriesName: seriesMatch.name
+                            };
+                        });
                         
-                        // Cache the result
+                        // Sort by quality (best first)
+                        enhancedEpisodes.sort((a, b) => {
+                            if (a.qualityScore !== b.qualityScore) {
+                                return b.qualityScore - a.qualityScore;
+                            }
+                            return b.sourceScore - a.sourceScore;
+                        });
+                        
+                        this.log.debug(`✅ Found ${episodeMatches.length} quality versions for: ${seriesMatch.name} S${season}E${episode}`);
+                        if (enhancedEpisodes.length > 1) {
+                            this.log.debug(`🎯 Episode quality options:`);
+                            enhancedEpisodes.slice(0, 5).forEach((ep, index) => {
+                                const crownStar = index === 0 ? ' 👑' : '';
+                                this.log.debug(`   ${index + 1}. "${ep.episode.title}" (${ep.qualityTag}, ${ep.sourceTag})${crownStar}`);
+                            });
+                        }
+                        
+                        // Cache the result - return top 5 quality options
+                        const topEpisodes = enhancedEpisodes.slice(0, 5);
                         this.realTimeCache.set(cacheKey, {
-                            result: {
-                                ...episodeMatch,
-                                seriesName: seriesMatch.name,
-                                seriesId: seriesMatch.id
-                            },
+                            result: topEpisodes,
                             timestamp: Date.now()
                         });
                         
-                        return {
-                            ...episodeMatch,
-                            seriesName: seriesMatch.name,
-                            seriesId: seriesMatch.id
-                        };
+                        return topEpisodes;
                     } else {
                         this.log.warn(`❌ Episode S${season}E${episode} not found in series "${seriesMatch.name}"`);
                     }
@@ -1042,49 +1234,128 @@ async function createAddon(config) {
                     
                     if (parseResult.isEpisode) {
                         // Handle series episode: tt1234567:1:1
-                        const episodeData = await addonInstance.searchEpisodeByImdbId(
+                        const episodeMatches = await addonInstance.searchEpisodeByImdbId(
                             parseResult.imdbId, 
                             parseResult.season, 
                             parseResult.episode
                         );
                         
-                        if (episodeData && episodeData.url) {
-                            const stream = {
-                                url: episodeData.url,
-                                title: `${episodeData.seriesName || 'Series'} S${parseResult.season}E${parseResult.episode}${episodeData.title ? ` - ${episodeData.title}` : ''}`,
-                                behaviorHints: { notWebReady: true }
-                            };
+                        if (episodeMatches && episodeMatches.length > 0) {
+                            const streams = episodeMatches.map((match, index) => {
+                                // Create beautiful episode title with emojis and quality info
+                                const seriesName = match.seriesName || 'Series';
+                                const seasonEpisode = `S${parseResult.season}E${parseResult.episode}`;
+                                const episodeTitle = match.episode.title || '';
+                                
+                                // Episode emojis based on season/episode
+                                const seasonEmoji = parseResult.season === 1 ? '🌟' : '📺';
+                                const episodeEmoji = '🎬';
+                                
+                                // Quality emojis
+                                let qualityEmoji = '';
+                                switch(match.qualityTag) {
+                                    case '4K': qualityEmoji = '🔥'; break;
+                                    case '1080p': qualityEmoji = '⭐'; break;
+                                    case '720p': qualityEmoji = '✨'; break;
+                                    case '480p': qualityEmoji = '📺'; break;
+                                    default: qualityEmoji = '💿'; break;
+                                }
+                                
+                                // Source emojis
+                                let sourceEmoji = '';
+                                switch(match.sourceTag) {
+                                    case 'BluRay': sourceEmoji = '💎'; break;
+                                    case 'Remux': sourceEmoji = '👑'; break;
+                                    case 'WEB-DL': sourceEmoji = '🌐'; break;
+                                    case 'WEBRip': sourceEmoji = '📡'; break;
+                                    case 'HDTV': sourceEmoji = '📺'; break;
+                                    case 'DVDRip': sourceEmoji = '💿'; break;
+                                    default: sourceEmoji = '🎬'; break;
+                                }
+                                
+                                // Best quality gets crown
+                                const crownEmoji = index === 0 ? '👑 ' : '';
+                                
+                                // Format: 👑 🌟 Dexter Resurrection S1E1 🔥💎 [4K BluRay] - Episode Title
+                                const qualityInfo = `${match.qualityTag}${match.sourceTag !== 'Digital' ? ' ' + match.sourceTag : ''}`;
+                                let formattedTitle = `${crownEmoji}${seasonEmoji} ${seriesName} ${seasonEpisode} ${qualityEmoji}${sourceEmoji} [${qualityInfo}]`;
+                                if (episodeTitle && !episodeTitle.includes(seasonEpisode)) {
+                                    formattedTitle += ` - ${episodeTitle}`;
+                                }
+                                
+                                return {
+                                    url: match.episode.url,
+                                    title: formattedTitle,
+                                    behaviorHints: { notWebReady: true }
+                                };
+                            });
                             
                             if (addonInstance.config.debug) {
-                                console.log('[DEBUG] Real-time episode stream found', { 
+                                console.log('[DEBUG] Real-time episode streams found', { 
                                     id, 
-                                    title: stream.title,
-                                    url: stream.url.substring(0, 60) + '...'
+                                    streamCount: streams.length,
+                                    titles: streams.map(s => s.title),
+                                    urls: streams.map(s => s.url.substring(0, 60) + '...')
                                 });
                             }
                             
-                            return { streams: [stream] };
+                            return { streams: streams };
                         }
                     } else {
                         // Handle movie: tt1234567
-                        const movieData = await addonInstance.searchMovieByImdbId(parseResult.imdbId);
+                        const movieMatches = await addonInstance.searchMovieByImdbId(parseResult.imdbId);
                         
-                        if (movieData && movieData.url) {
-                            const stream = {
-                                url: movieData.url,
-                                title: movieData.name || movieData.title || 'Movie',
-                                behaviorHints: { notWebReady: true }
-                            };
+                        if (movieMatches && movieMatches.length > 0) {
+                            const streams = movieMatches.map((match, index) => {
+                                // Create descriptive title with quality and source info plus emojis
+                                const baseTitle = match.item.name || match.item.title || 'Movie';
+                                
+                                // Quality emojis
+                                let qualityEmoji = '';
+                                switch(match.qualityTag) {
+                                    case '4K': qualityEmoji = '🔥'; break;
+                                    case '1080p': qualityEmoji = '⭐'; break;
+                                    case '720p': qualityEmoji = '✨'; break;
+                                    case '480p': qualityEmoji = '📺'; break;
+                                    default: qualityEmoji = '💿'; break;
+                                }
+                                
+                                // Source emojis
+                                let sourceEmoji = '';
+                                switch(match.sourceTag) {
+                                    case 'BluRay': sourceEmoji = '💎'; break;
+                                    case 'Remux': sourceEmoji = '👑'; break;
+                                    case 'WEB-DL': sourceEmoji = '🌐'; break;
+                                    case 'WEBRip': sourceEmoji = '📡'; break;
+                                    case 'HDTV': sourceEmoji = '📺'; break;
+                                    case 'DVDRip': sourceEmoji = '💿'; break;
+                                    default: sourceEmoji = '🎬'; break;
+                                }
+                                
+                                // Best match gets crown
+                                const crownEmoji = index === 0 ? '👑 ' : '';
+                                
+                                // Format: 👑 Superman 4K 🔥💎 [4K BluRay]
+                                const qualityInfo = `${match.qualityTag}${match.sourceTag !== 'Digital' ? ' ' + match.sourceTag : ''}`;
+                                const title = `${crownEmoji}${baseTitle} ${qualityEmoji}${sourceEmoji} [${qualityInfo}]`;
+                                
+                                return {
+                                    url: match.item.url,
+                                    title: title,
+                                    behaviorHints: { notWebReady: true }
+                                };
+                            });
                             
                             if (addonInstance.config.debug) {
-                                console.log('[DEBUG] Real-time movie stream found', { 
+                                console.log('[DEBUG] Real-time movie streams found', { 
                                     id, 
-                                    title: stream.title,
-                                    url: stream.url.substring(0, 60) + '...'
+                                    streamCount: streams.length,
+                                    titles: streams.map(s => s.title),
+                                    urls: streams.map(s => s.url.substring(0, 60) + '...')
                                 });
                             }
                             
-                            return { streams: [stream] };
+                            return { streams: streams };
                         }
                     }
                     
