@@ -32,7 +32,7 @@ async function fetchData(addonInstance) {
             `&type=m3u_plus` +
             (xtreamOutput ? `&output=${encodeURIComponent(xtreamOutput)}` : '');
         const resp = await fetch(url, {
-            timeout: 30000,
+            timeout: 60000,
             headers: { 'User-Agent': 'Stremio M3U/EPG Addon (xtreamProvider/m3u)' }
         });
         if (!resp.ok) throw new Error('Xtream M3U fetch failed');
@@ -72,10 +72,10 @@ async function fetchData(addonInstance) {
         const base = `${xtreamUrl}/player_api.php?username=${encodeURIComponent(xtreamUsername)}&password=${encodeURIComponent(xtreamPassword)}`;
         // Fetch streams + category lists in parallel to map category_id -> category_name
         const [liveResp, vodResp, liveCatsResp, vodCatsResp] = await Promise.all([
-            fetch(`${base}&action=get_live_streams`, { timeout: 30000 }),
-            fetch(`${base}&action=get_vod_streams`, { timeout: 30000 }),
-            fetch(`${base}&action=get_live_categories`, { timeout: 20000 }).catch(() => null),
-            fetch(`${base}&action=get_vod_categories`, { timeout: 20000 }).catch(() => null)
+            fetch(`${base}&action=get_live_streams`, { timeout: 60000 }),
+            fetch(`${base}&action=get_vod_streams`, { timeout: 60000 }),
+            fetch(`${base}&action=get_live_categories`, { timeout: 30000 }).catch(() => null),
+            fetch(`${base}&action=get_vod_categories`, { timeout: 30000 }).catch(() => null)
         ]);
 
         if (!liveResp.ok) throw new Error('Xtream live streams fetch failed');
@@ -148,8 +148,8 @@ async function fetchData(addonInstance) {
         if (config.includeSeries !== false) {
             try {
                 const [seriesResp, seriesCatsResp] = await Promise.all([
-                    fetch(`${base}&action=get_series`, { timeout: 35000 }),
-                    fetch(`${base}&action=get_series_categories`, { timeout: 20000 }).catch(() => null)
+                    fetch(`${base}&action=get_series`, { timeout: 60000 }),
+                    fetch(`${base}&action=get_series_categories`, { timeout: 30000 }).catch(() => null)
                 ]);
                 let seriesCatMap = {};
                 try {
@@ -199,7 +199,7 @@ async function fetchData(addonInstance) {
             : `${xtreamUrl}/xmltv.php?username=${encodeURIComponent(xtreamUsername)}&password=${encodeURIComponent(xtreamPassword)}`;
 
         try {
-            const epgResp = await fetch(epgSource, { timeout: 45000 });
+            const epgResp = await fetch(epgSource, { timeout: 60000 });
             if (epgResp.ok) {
                 const epgContent = await epgResp.text();
                 addonInstance.epgData = await addonInstance.parseEPG(epgContent);
@@ -218,7 +218,7 @@ async function fetchSeriesInfo(addonInstance, seriesId) {
 
     const base = `${config.xtreamUrl}/player_api.php?username=${encodeURIComponent(config.xtreamUsername)}&password=${encodeURIComponent(config.xtreamPassword)}`;
     try {
-        const infoResp = await fetch(`${base}&action=get_series_info&series_id=${encodeURIComponent(seriesId)}`, { timeout: 25000 });
+        const infoResp = await fetch(`${base}&action=get_series_info&series_id=${encodeURIComponent(seriesId)}`, { timeout: 45000 });
         if (!infoResp.ok) return { videos: [] };
         const infoJson = await infoResp.json();
         const videos = [];

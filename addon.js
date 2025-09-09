@@ -1050,67 +1050,93 @@ class M3UEPGAddon {
             this.log.debug(`📊 Total series in IPTV library: ${this.series.length}`);
             this.log.debug(`🎯 Searching IPTV library for series: "${omdbData.title}"`);
 
-            // Find best series match
-            const { match: seriesMatch } = this.contentMatcher.findBestMatch(omdbData.title, this.series, 'series');
+            // Find ALL series matches (not just the best one)
+            const allMatches = this.contentMatcher.findAllMatches(omdbData.title, omdbData.year, this.series, 'series');
             
-            if (seriesMatch) {
-                // Get series episodes
-                const seriesInfo = await this.ensureSeriesInfo(seriesMatch.series_id || seriesMatch.id.replace(/^iptv_series_/, ''));
+            if (allMatches.length > 0) {
+                this.log.debug(`🎯 Found ${allMatches.length} series matches, checking all for S${season}E${episode}`);
                 
-                if (seriesInfo && Array.isArray(seriesInfo.videos)) {
-                    this.log.debug(`📺 Series has episodes data, looking for S${season}E${episode}`);
+                let allEpisodeMatches = [];
+                
+                // Check each matching series for the episode
+                for (const seriesMatchInfo of allMatches) {
+                    const seriesMatch = seriesMatchInfo.item;
+                    const seriesScore = seriesMatchInfo.finalScore;
                     
-                    // Find ALL episodes matching this season/episode (for multiple qualities)
-                    const episodeMatches = seriesInfo.videos.filter(v => 
-                        Number(v.season) === season && Number(v.episode) === episode
-                    );
-                    
-                    if (episodeMatches.length > 0) {
-                        // Analyze and rank episodes by quality
-                        const enhancedEpisodes = episodeMatches.map(ep => {
-                            const qualityInfo = this.contentMatcher.extractQuality(ep.title || '');
-                            const sourceInfo = this.contentMatcher.extractSource(ep.title || '');
+                    try {
+                        // Get series episodes
+                        const seriesInfo = await this.ensureSeriesInfo(seriesMatch.series_id || seriesMatch.id.replace(/^iptv_series_/, ''));
+                        
+                        if (seriesInfo && Array.isArray(seriesInfo.videos)) {
+                            // Find episodes matching this season/episode in this series
+                            const episodeMatches = seriesInfo.videos.filter(v => 
+                                Number(v.season) === season && Number(v.episode) === episode
+                            );
                             
-                            return {
-                                episode: ep,
-                                qualityScore: qualityInfo.quality,
-                                qualityTag: qualityInfo.qualityTag,
-                                sourceScore: sourceInfo.source,
-                                sourceTag: sourceInfo.sourceTag,
-                                seriesName: seriesMatch.name
-                            };
-                        });
-                        
-                        // Sort by quality (best first)
-                        enhancedEpisodes.sort((a, b) => {
-                            if (a.qualityScore !== b.qualityScore) {
-                                return b.qualityScore - a.qualityScore;
+                            if (episodeMatches.length > 0) {
+                                this.log.debug(`📺 Found ${episodeMatches.length} episodes in "${seriesMatch.name}" (series score: ${seriesScore.toFixed(2)})`);
+                                
+                                // Analyze and rank episodes by quality
+                                const enhancedEpisodes = episodeMatches.map(ep => {
+                                    const qualityInfo = this.contentMatcher.extractQuality(ep.title || '');
+                                    const sourceInfo = this.contentMatcher.extractSource(ep.title || '');
+                                    
+                                    return {
+                                        episode: ep,
+                                        qualityScore: qualityInfo.quality,
+                                        qualityTag: qualityInfo.qualityTag,
+                                        sourceScore: sourceInfo.source,
+                                        sourceTag: sourceInfo.sourceTag,
+                                        seriesName: seriesMatch.name,
+                                        seriesScore: seriesScore
+                                    };
+                                });
+                                
+                                allEpisodeMatches.push(...enhancedEpisodes);
                             }
-                            return b.sourceScore - a.sourceScore;
-                        });
-                        
-                        this.log.debug(`✅ Found ${episodeMatches.length} quality versions for: ${seriesMatch.name} S${season}E${episode}`);
-                        if (enhancedEpisodes.length > 1) {
-                            this.log.debug(`🎯 Episode quality options:`);
-                            enhancedEpisodes.slice(0, 5).forEach((ep, index) => {
-                                const crownStar = index === 0 ? ' 👑' : '';
-                                this.log.debug(`   ${index + 1}. "${ep.episode.title}" (${ep.qualityTag}, ${ep.sourceTag})${crownStar}`);
-                            });
                         }
-                        
-                        // Cache the result - return top 5 quality options
-                        const topEpisodes = enhancedEpisodes.slice(0, 5);
-                        this.realTimeCache.set(cacheKey, {
-                            result: topEpisodes,
-                            timestamp: Date.now()
-                        });
-                        
-                        return topEpisodes;
-                    } else {
-                        this.log.warn(`❌ Episode S${season}E${episode} not found in series "${seriesMatch.name}"`);
+                    } catch (error) {
+                        this.log.warn(`⚠️ Error checking series "${seriesMatch.name}": ${error.message}`);
                     }
+                }
+                
+                if (allEpisodeMatches.length > 0) {
+                    // Sort by series match score first, then quality, then source
+                    allEpisodeMatches.sort((a, b) => {
+                        // Primary: Series match score
+                        if (Math.abs(a.seriesScore - b.seriesScore) > 0.05) {
+                            return b.seriesScore - a.seriesScore;
+                        }
+                        // Secondary: Quality score
+                        if (a.qualityScore !== b.qualityScore) {
+                            return b.qualityScore - a.qualityScore;
+                        }
+                        // Tertiary: Source quality
+                        return b.sourceScore - a.sourceScore;
+                    });
+                    
+                    this.log.debug(`✅ Found ${allEpisodeMatches.length} total quality versions across all series for S${season}E${episode}`);
+                    this.log.debug(`🎯 All episode quality options:`);
+                    allEpisodeMatches.slice(0, 10).forEach((ep, index) => {
+                        const crownStar = index === 0 ? ' 👑' : '';
+                        const qualityEmoji = ep.qualityTag === '4K' ? '🔥' : ep.qualityTag === '1080p' ? '⭐' : '✨';
+                        const sourceEmoji = ep.sourceTag === 'BluRay' ? '💎' : ep.sourceTag === 'WEB-DL' ? '🌐' : '🎬';
+                        this.log.debug(`   ${index + 1}. "${ep.seriesName}" ${qualityEmoji}${sourceEmoji} (${ep.qualityTag}, ${ep.sourceTag}, series: ${ep.seriesScore.toFixed(2)})${crownStar}`);
+                    });
+                    if (allEpisodeMatches.length > 10) {
+                        this.log.debug(`   ... and ${allEpisodeMatches.length - 10} more quality options`);
+                    }
+                    
+                    // Cache the result - return top 10 quality options from all series
+                    const topEpisodes = allEpisodeMatches.slice(0, 10);
+                    this.realTimeCache.set(cacheKey, {
+                        result: topEpisodes,
+                        timestamp: Date.now()
+                    });
+                    
+                    return topEpisodes;
                 } else {
-                    this.log.warn(`❌ No episodes data available for series "${seriesMatch.name}"`);
+                    this.log.warn(`❌ Episode S${season}E${episode} not found in any matching series`);
                 }
             } else {
                 this.log.warn(`❌ No suitable series match found for "${omdbData.title}" in IPTV library`);
